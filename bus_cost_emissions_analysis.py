@@ -18,7 +18,7 @@ ANNI_PROIEZIONE = config["ANNI_PROIEZIONE"]
 TASSO_INFLAZIONE_DIESEL = config["TASSO_INFLAZIONE_DIESEL"]
 TASSO_INFLAZIONE_ELETTRICO = config["TASSO_INFLAZIONE_ELETTRICO"]
 COSTI_UNA_TANTUM = config["COSTI_INFRA_ELETTRICA"]
-num_bus = config["NUMERO_BUS"]
+num_bus_initial = config["NUMERO_BUS"]
 
 giorni_totali = GIORNI_FERIALI + GIORNI_WEEKEND
 
@@ -71,7 +71,7 @@ def calcola_emissioni_per_km(emissioni_totali, km_annui):
 
 
 def calcola_costo_proiezione(km_annui, consumo_medio, costo_manutenzione, costo_iniziale_bus, costo_carburante,
-                             tasso_inflazione, anni, periodo_ammortamento, tipo_bus, ammortamento=True):
+                             tasso_inflazione, anni, periodo_ammortamento, tipo_bus, num_bus, ammortamento=True):
     costi_annuali = []
     ammortamento_annuale = costo_iniziale_bus / periodo_ammortamento
     costo_una_tantum_applicato = False
@@ -99,12 +99,16 @@ def main():
     st.title("Analisi Comparativa tra Bus Elettrici e Diesel")
 
     st.sidebar.header("Input dell'utente")
+
+    # Add functionality to increase or decrease the number of buses
+    num_bus = st.sidebar.number_input("Numero di bus", min_value=1, max_value=100, value=num_bus_initial, step=1)
+
     km_feriali_linee = [
         st.sidebar.number_input(f"Inserire i km giornalieri percorsi durante i giorni feriali per la linea {i + 1}:",
-                                value=100.0) for i in range(num_bus)]
+                                value=100.0, step=5.0) for i in range(num_bus)]
     km_weekend_linee = [
         st.sidebar.number_input(f"Inserire i km giornalieri percorsi durante il weekend per la linea {i + 1}:",
-                                value=50.0) for i in range(num_bus)]
+                                value=50.0, step=5.0) for i in range(num_bus)]
 
     km_totali = {"elettrico": 0, "diesel_extra": 0, "diesel_completo": 0}
 
@@ -156,7 +160,7 @@ def main():
                                                            "bonus"], dati_bus["diesel"]["costo_carburante"],
                                                        TASSO_INFLAZIONE_DIESEL, ANNI_PROIEZIONE,
                                                        dati_bus["diesel"]["periodo_ammortamento"], tipo_bus="diesel",
-                                                       ammortamento=False)
+                                                       num_bus=num_bus, ammortamento=False)
     proiezione_costi_elettrico = calcola_costo_proiezione(km_totali["elettrico"], dati_bus["elettrico"]["consumo"],
                                                           dati_bus["elettrico"]["costo_manutenzione"],
                                                           dati_bus["elettrico"]["costo_iniziale"] -
@@ -164,7 +168,7 @@ def main():
                                                           dati_bus["elettrico"]["costo_carburante"],
                                                           TASSO_INFLAZIONE_ELETTRICO, ANNI_PROIEZIONE,
                                                           dati_bus["elettrico"]["periodo_ammortamento"],
-                                                          tipo_bus="elettrico", ammortamento=False)
+                                                          tipo_bus="elettrico", num_bus=num_bus, ammortamento=False)
 
     # Calcolo proiezioni a x anni (costi cumulati con ammortamento)
     costo_cumulato_diesel = np.cumsum(
@@ -172,14 +176,14 @@ def main():
                                  dati_bus["diesel"]["costo_manutenzione"],
                                  dati_bus["diesel"]["costo_iniziale"] - dati_bus["diesel"]["bonus"],
                                  dati_bus["diesel"]["costo_carburante"], TASSO_INFLAZIONE_DIESEL, ANNI_PROIEZIONE,
-                                 dati_bus["diesel"]["periodo_ammortamento"], tipo_bus="diesel", ammortamento=True))
+                                 dati_bus["diesel"]["periodo_ammortamento"], tipo_bus="diesel", num_bus=num_bus, ammortamento=True))
     costo_cumulato_elettrico = np.cumsum(
         calcola_costo_proiezione(km_totali["elettrico"], dati_bus["elettrico"]["consumo"],
                                  dati_bus["elettrico"]["costo_manutenzione"],
                                  dati_bus["elettrico"]["costo_iniziale"] - dati_bus["elettrico"]["bonus"],
                                  dati_bus["elettrico"]["costo_carburante"], TASSO_INFLAZIONE_ELETTRICO, ANNI_PROIEZIONE,
                                  dati_bus["elettrico"]["periodo_ammortamento"], tipo_bus="elettrico",
-                                 ammortamento=True))
+                                 num_bus=num_bus, ammortamento=True))
 
     # Calcolo delle nuove statistiche
     costo_per_km_elettrico = calcola_costo_per_km(costo_annuale_elettrico, km_totali["elettrico"])
