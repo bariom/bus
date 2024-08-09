@@ -27,6 +27,23 @@ dati_bus = {
     "diesel": config["diesel"]
 }
 
+def gestione_km_linea(km_feriali, km_weekend, km_limite):
+    # Calculate electric and diesel usage for weekdays
+    km_elettrico_feriali = min(km_feriali, km_limite) * GIORNI_FERIALI
+    km_diesel_extra_feriali = max(0, km_feriali - km_limite) * GIORNI_FERIALI
+
+    # Calculate electric and diesel usage for weekends
+    km_elettrico_weekend = min(km_weekend, km_limite) * GIORNI_WEEKEND
+    km_diesel_extra_weekend = max(0, km_weekend - km_limite) * GIORNI_WEEKEND
+
+    # Sum up the total kilometers covered by electric and diesel buses
+    km_elettrico_totale = km_elettrico_feriali + km_elettrico_weekend
+    km_diesel_extra_totale = km_diesel_extra_feriali + km_diesel_extra_weekend
+
+    # Check if any extra diesel bus is needed (1 bus per line exceeding the limit)
+    supporto_diesel_needed = int(km_feriali > km_limite) + int(km_weekend > km_limite)
+
+    return km_elettrico_totale, km_diesel_extra_totale, supporto_diesel_needed
 
 def calcola_costo_annuale(km_annui, costo_carburante, consumo_medio, costo_manutenzione, num_bus, ammortamento_annuale,
                           anno, periodo_ammortamento, costo_iniziale_bus):
@@ -36,39 +53,20 @@ def calcola_costo_annuale(km_annui, costo_carburante, consumo_medio, costo_manut
         costo_totale += costo_iniziale_bus * num_bus  # Add the bus purchase cost in the replacement year
     return round(costo_totale, 2)
 
-
-def calcola_costo_annuale_con_ammortamento(km_annui, costo_carburante, consumo_medio, costo_manutenzione, num_bus,
-                                           ammortamento_annuale):
-    costo_carburante_annuo = km_annui * consumo_medio * costo_carburante
-    costo_totale = (costo_carburante_annuo + costo_manutenzione + ammortamento_annuale) * num_bus
+def calcola_costo_annuale_diesel_supporto(km_diesel_extra, costo_carburante, consumo_medio, costo_manutenzione, ammortamento_annuale, numero_diesel_supporto, include_initial_purchase=False):
+    # Calculate the cost associated with the diesel buses based on the actual number needed
+    costo_carburante_annuo = km_diesel_extra * consumo_medio * costo_carburante
+    costo_totale = (costo_carburante_annuo + costo_manutenzione + ammortamento_annuale) * numero_diesel_supporto
+    if include_initial_purchase:
+        costo_totale += dati_bus["diesel"]["costo_iniziale"] * numero_diesel_supporto
     return round(costo_totale, 2)
-
-
-def calcola_emissioni_co2(km_annui, emissioni_per_unita, num_bus):
-    emissioni_totali = (km_annui * emissioni_per_unita * num_bus)
-    return round(emissioni_totali, 2)
-
-
-def calcola_km_annui(km_feriali, km_weekend):
-    km_annui = (km_feriali * GIORNI_FERIALI) + (km_weekend * GIORNI_WEEKEND)
-    return km_annui
-
-
-def gestione_km_linea(km_feriali, km_weekend, km_limite):
-    km_annui = calcola_km_annui(km_feriali, km_weekend)
-    km_elettrico = min(km_annui, km_limite * giorni_totali)
-    km_diesel_extra = max(0, km_annui - (km_limite * giorni_totali))
-    km_diesel_completo = km_annui
-    return km_elettrico, km_diesel_extra, km_diesel_completo
-
 
 def calcola_costo_per_km(costo_totale, km_annui):
     return round(costo_totale / km_annui, 2) if km_annui != 0 else 0
 
-
-def calcola_emissioni_per_km(emissioni_totali, km_annui):
-    return round(emissioni_totali / km_annui, 2) if km_annui != 0 else 0
-
+def calcola_emissioni_co2(km_annui, emissioni_per_unita, num_bus):
+    emissioni_totali = (km_annui * emissioni_per_unita * num_bus)
+    return round(emissioni_totali, 2)
 
 def calcola_costo_proiezione(km_annui, consumo_medio, costo_manutenzione, costo_iniziale_bus, costo_carburante,
                              tasso_inflazione, anni, periodo_ammortamento, tipo_bus, num_bus, ammortamento=True):
@@ -77,8 +75,9 @@ def calcola_costo_proiezione(km_annui, consumo_medio, costo_manutenzione, costo_
     costo_una_tantum_applicato = False
     for anno in range(anni):
         if ammortamento:
-            costo_annuale = calcola_costo_annuale_con_ammortamento(km_annui, costo_carburante, consumo_medio,
-                                                                   costo_manutenzione, num_bus, ammortamento_annuale)
+            costo_annuale = calcola_costo_annuale(km_annui, costo_carburante, consumo_medio,
+                                                  costo_manutenzione, num_bus, ammortamento_annuale, anno,
+                                                  periodo_ammortamento, costo_iniziale_bus)
         else:
             costo_annuale = calcola_costo_annuale(km_annui, costo_carburante, consumo_medio, costo_manutenzione,
                                                   num_bus, ammortamento_annuale, anno, periodo_ammortamento,
@@ -93,7 +92,6 @@ def calcola_costo_proiezione(km_annui, consumo_medio, costo_manutenzione, costo_
         costi_annuali.append(costo_annuale)
         costo_carburante *= (1 + tasso_inflazione)
     return costi_annuali
-
 
 def main():
     st.title("Analisi Comparativa tra Bus Elettrici e Diesel")
@@ -110,20 +108,36 @@ def main():
         st.sidebar.number_input(f"Inserire i km giornalieri percorsi durante il weekend per la linea {i + 1}:",
                                 value=50.0, step=5.0) for i in range(num_bus)]
 
-    km_totali = {"elettrico": 0, "diesel_extra": 0, "diesel_completo": 0}
+    km_totali = {"elettrico": 0, "diesel_extra": 0}
+    total_supporto_diesel_needed = 0
 
     for km_feriali, km_weekend in zip(km_feriali_linee, km_weekend_linee):
-        km_elettrico, km_diesel_extra, km_diesel_completo = gestione_km_linea(km_feriali, km_weekend,
-                                                                              dati_bus["elettrico"]["km_limite"])
+        km_elettrico, km_diesel_extra, supporto_diesel_needed = gestione_km_linea(km_feriali, km_weekend,
+                                                                                  dati_bus["elettrico"]["km_limite"])
         km_totali["elettrico"] += km_elettrico
         km_totali["diesel_extra"] += km_diesel_extra
-        km_totali["diesel_completo"] += km_diesel_completo
+        total_supporto_diesel_needed += supporto_diesel_needed
 
     ammortamento_annuale_elettrico = (dati_bus["elettrico"]["costo_iniziale"] - dati_bus["elettrico"]["bonus"]) / \
                                      dati_bus["elettrico"]["periodo_ammortamento"]
     ammortamento_annuale_diesel = (dati_bus["diesel"]["costo_iniziale"] - dati_bus["diesel"]["bonus"]) / \
                                   dati_bus["diesel"]["periodo_ammortamento"]
 
+    # Calculate costs and emissions for the baseline scenario with only diesel buses
+    km_totali_diesel_completo = sum(km_feriali_linee) * GIORNI_FERIALI + sum(km_weekend_linee) * GIORNI_WEEKEND
+
+    costo_annuale_diesel_completo = calcola_costo_annuale(km_totali_diesel_completo,
+                                                          dati_bus["diesel"]["costo_carburante"],
+                                                          dati_bus["diesel"]["consumo"],
+                                                          dati_bus["diesel"]["costo_manutenzione"], num_bus,
+                                                          ammortamento_annuale_diesel, 0,
+                                                          dati_bus["diesel"]["periodo_ammortamento"],
+                                                          dati_bus["diesel"]["costo_iniziale"])
+
+    emissioni_annue_diesel_completo = calcola_emissioni_co2(km_totali_diesel_completo,
+                                                            dati_bus["diesel"]["emissioni"], num_bus)
+
+    # Calculate costs and emissions for electric buses and diesel support (if needed)
     costo_annuale_elettrico = calcola_costo_annuale(km_totali["elettrico"], dati_bus["elettrico"]["costo_carburante"],
                                                     dati_bus["elettrico"]["consumo"],
                                                     dati_bus["elettrico"]["costo_manutenzione"], num_bus,
@@ -133,28 +147,33 @@ def main():
     emissioni_annue_elettrico = calcola_emissioni_co2(km_totali["elettrico"], dati_bus["elettrico"]["emissioni"],
                                                       num_bus)
 
-    costo_annuale_diesel_extra = calcola_costo_annuale(km_totali["diesel_extra"],
-                                                       dati_bus["diesel"]["costo_carburante"],
-                                                       dati_bus["diesel"]["consumo"],
-                                                       dati_bus["diesel"]["costo_manutenzione"], num_bus,
-                                                       ammortamento_annuale_diesel, 0,
-                                                       dati_bus["diesel"]["periodo_ammortamento"],
-                                                       dati_bus["diesel"]["costo_iniziale"])
+    # Include initial purchase cost of additional diesel buses only if needed
+    costo_annuale_diesel_supporto = calcola_costo_annuale_diesel_supporto(km_totali["diesel_extra"],
+                                                                          dati_bus["diesel"]["costo_carburante"],
+                                                                          dati_bus["diesel"]["consumo"],
+                                                                          dati_bus["diesel"]["costo_manutenzione"],
+                                                                          ammortamento_annuale_diesel,
+                                                                          total_supporto_diesel_needed,
+                                                                          include_initial_purchase=True)
+
     emissioni_annue_diesel_extra = calcola_emissioni_co2(km_totali["diesel_extra"], dati_bus["diesel"]["emissioni"],
-                                                         num_bus)
+                                                         total_supporto_diesel_needed)
 
-    costo_annuale_diesel_completo = calcola_costo_annuale(km_totali["diesel_completo"],
-                                                          dati_bus["diesel"]["costo_carburante"],
-                                                          dati_bus["diesel"]["consumo"],
-                                                          dati_bus["diesel"]["costo_manutenzione"], num_bus,
-                                                          ammortamento_annuale_diesel, 0,
-                                                          dati_bus["diesel"]["periodo_ammortamento"],
-                                                          dati_bus["diesel"]["costo_iniziale"])
-    emissioni_annue_diesel_completo = calcola_emissioni_co2(km_totali["diesel_completo"],
-                                                            dati_bus["diesel"]["emissioni"], num_bus)
+    # Calculate cost per km for electric bus
+    costo_per_km_elettrico = calcola_costo_per_km(costo_annuale_elettrico, km_totali["elettrico"])
 
-    # Calcolo proiezioni a x anni (costi annuali con acquisto bus)
-    proiezione_costi_diesel = calcola_costo_proiezione(km_totali["diesel_completo"], dati_bus["diesel"]["consumo"],
+    # Calculate cost per km for diesel support bus
+    costo_per_km_diesel_supporto = calcola_costo_per_km(costo_annuale_diesel_supporto, km_totali["diesel_extra"])
+
+    # Calculate emissions per km for electric bus
+    emissioni_per_km_elettrico = calcola_costo_per_km(emissioni_annue_elettrico, km_totali["elettrico"])
+
+    # Calculate emissions per km for diesel support bus
+    emissioni_per_km_diesel_extra = calcola_costo_per_km(emissioni_annue_diesel_extra, km_totali["diesel_extra"])
+
+    # Calculate projections for diesel and electric buses over the specified number of years
+    proiezione_costi_diesel = calcola_costo_proiezione(km_totali_diesel_completo,
+                                                       dati_bus["diesel"]["consumo"],
                                                        dati_bus["diesel"]["costo_manutenzione"],
                                                        dati_bus["diesel"]["costo_iniziale"] - dati_bus["diesel"][
                                                            "bonus"], dati_bus["diesel"]["costo_carburante"],
@@ -170,33 +189,12 @@ def main():
                                                           dati_bus["elettrico"]["periodo_ammortamento"],
                                                           tipo_bus="elettrico", num_bus=num_bus, ammortamento=False)
 
-    # Calcolo proiezioni a x anni (costi cumulati con ammortamento)
-    costo_cumulato_diesel = np.cumsum(
-        calcola_costo_proiezione(km_totali["diesel_completo"], dati_bus["diesel"]["consumo"],
-                                 dati_bus["diesel"]["costo_manutenzione"],
-                                 dati_bus["diesel"]["costo_iniziale"] - dati_bus["diesel"]["bonus"],
-                                 dati_bus["diesel"]["costo_carburante"], TASSO_INFLAZIONE_DIESEL, ANNI_PROIEZIONE,
-                                 dati_bus["diesel"]["periodo_ammortamento"], tipo_bus="diesel", num_bus=num_bus, ammortamento=True))
-    costo_cumulato_elettrico = np.cumsum(
-        calcola_costo_proiezione(km_totali["elettrico"], dati_bus["elettrico"]["consumo"],
-                                 dati_bus["elettrico"]["costo_manutenzione"],
-                                 dati_bus["elettrico"]["costo_iniziale"] - dati_bus["elettrico"]["bonus"],
-                                 dati_bus["elettrico"]["costo_carburante"], TASSO_INFLAZIONE_ELETTRICO, ANNI_PROIEZIONE,
-                                 dati_bus["elettrico"]["periodo_ammortamento"], tipo_bus="elettrico",
-                                 num_bus=num_bus, ammortamento=True))
-
-    # Calcolo delle nuove statistiche
-    costo_per_km_elettrico = calcola_costo_per_km(costo_annuale_elettrico, km_totali["elettrico"])
-    costo_per_km_diesel_extra = calcola_costo_per_km(costo_annuale_diesel_extra, km_totali["diesel_extra"])
-    costo_per_km_diesel_completo = calcola_costo_per_km(costo_annuale_diesel_completo, km_totali["diesel_completo"])
-
-    emissioni_per_km_elettrico = calcola_emissioni_per_km(emissioni_annue_elettrico, km_totali["elettrico"])
-    emissioni_per_km_diesel_extra = calcola_emissioni_per_km(emissioni_annue_diesel_extra, km_totali["diesel_extra"])
-    emissioni_per_km_diesel_completo = calcola_emissioni_per_km(emissioni_annue_diesel_completo,
-                                                                km_totali["diesel_completo"])
+    # Calculate cumulative costs for diesel and electric buses
+    costo_cumulato_diesel = np.cumsum(proiezione_costi_diesel)
+    costo_cumulato_elettrico = np.cumsum(proiezione_costi_elettrico)
 
     risparmio_costi_annuale = round(
-        costo_annuale_diesel_completo - (costo_annuale_elettrico + costo_annuale_diesel_extra), 2)
+        costo_annuale_diesel_completo - (costo_annuale_elettrico + costo_annuale_diesel_supporto), 2)
     riduzione_emissioni_annuale = round(
         emissioni_annue_diesel_completo - (emissioni_annue_elettrico + emissioni_annue_diesel_extra), 2)
 
@@ -204,8 +202,6 @@ def main():
         km_totali.values()) != 0 else 0
     percentuale_utilizzo_diesel_extra = round((km_totali["diesel_extra"] / sum(km_totali.values())) * 100, 2) if sum(
         km_totali.values()) != 0 else 0
-    percentuale_utilizzo_diesel_completo = round((km_totali["diesel_completo"] / sum(km_totali.values())) * 100,
-                                                 2) if sum(km_totali.values()) != 0 else 0
 
     # Display the results
     st.header("Risultati delle Proiezioni")
@@ -218,7 +214,7 @@ def main():
 
     st.subheader("Costi ed Emissioni Attuali")
     st.markdown(f"""
-    - **Costo annuale totale per bus elettrici + bus diesel di supporto:** {round(costo_annuale_elettrico + costo_annuale_diesel_extra, 2)} CHF
+    - **Costo annuale totale per bus elettrici + bus diesel di supporto:** {round(costo_annuale_elettrico + costo_annuale_diesel_supporto, 2)} CHF
     - **Emissioni annuali totali di CO2 per bus elettrici + bus diesel di supporto:** {round(emissioni_annue_elettrico + emissioni_annue_diesel_extra, 2) / 1000} t
     - **Costo annuale totale per bus solo diesel:** {costo_annuale_diesel_completo} CHF
     - **Emissioni annuali totali di CO2 per bus solo diesel:** {emissioni_annue_diesel_completo / 1000} t
@@ -227,15 +223,13 @@ def main():
     st.subheader("Costi per km")
     st.markdown(f"""
     - **Bus elettrici:** {costo_per_km_elettrico:.2f} CHF/km
-    - **Bus diesel di supporto:** {costo_per_km_diesel_extra:.2f} CHF/km
-    - **Bus solo diesel:** {costo_per_km_diesel_completo:.2f} CHF/km
+    - **Bus diesel di supporto:** {costo_per_km_diesel_supporto:.2f} CHF/km
     """)
 
     st.subheader("Emissioni di CO2 per km")
     st.markdown(f"""
     - **Bus elettrici:** {emissioni_per_km_elettrico:.2f} kg/km
     - **Bus diesel di supporto:** {emissioni_per_km_diesel_extra:.2f} kg/km
-    - **Bus solo diesel:** {emissioni_per_km_diesel_completo:.2f} kg/km
     """)
 
     st.subheader("Risparmio Annuale e Riduzione Emissioni")
@@ -248,7 +242,6 @@ def main():
     st.markdown(f"""
     - **Bus elettrici:** {percentuale_utilizzo_elettrico:.2f}%
     - **Bus diesel di supporto:** {percentuale_utilizzo_diesel_extra:.2f}%
-    - **Bus solo diesel:** {percentuale_utilizzo_diesel_completo:.2f}%
     """)
 
     # Create comparison graphs
@@ -287,7 +280,7 @@ def main():
 
     costi_per_km_data = pd.DataFrame({
         'Tipo': ["Elettrici", "Diesel di Supporto", "Solo Diesel"],
-        'Costi per km': [costo_per_km_elettrico, costo_per_km_diesel_extra, costo_per_km_diesel_completo]
+        'Costi per km': [costo_per_km_elettrico, costo_per_km_diesel_supporto, calcola_costo_per_km(costo_annuale_diesel_completo, km_totali_diesel_completo)]
     })
     sns.barplot(ax=axs[1, 0], x='Tipo', y='Costi per km', data=costi_per_km_data, palette=['blue', 'orange', 'green'],
                 dodge=False, legend=False)
@@ -299,13 +292,12 @@ def main():
 
     emissioni_per_km_data = pd.DataFrame({
         'Tipo': ["Elettrici", "Diesel di Supporto", "Solo Diesel"],
-        'Emissioni per km': [emissioni_per_km_elettrico, emissioni_per_km_diesel_extra,
-                             emissioni_per_km_diesel_completo]
+        'Emissioni per km': [emissioni_per_km_elettrico, emissioni_per_km_diesel_extra, calcola_costo_per_km(emissioni_annue_diesel_completo, km_totali_diesel_completo)]
     })
     sns.barplot(ax=axs[1, 1], x='Tipo', y='Emissioni per km', data=emissioni_per_km_data,
                 palette=['blue', 'orange', 'green'], dodge=False, legend=False)
     axs[1, 1].set_ylabel("Emissioni di CO2 per km (kg)", fontsize=14, fontweight='bold')
-    axs[1, 1].set_title(f"Emissioni di CO2 per km {num_bus} bus", fontsize=16)
+    axs[1, 1].set_title(f"Emissioni di CO2 per km", fontsize=16)
     axs[1, 1].grid(True)
     axs[1, 1].set_xlabel('')
     axs[1, 1].tick_params(axis='x', which='both', length=0)
