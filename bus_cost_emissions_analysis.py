@@ -40,8 +40,8 @@ def gestione_km_linea(km_feriali, km_weekend, km_limite):
     km_elettrico_totale = km_elettrico_feriali + km_elettrico_weekend
     km_diesel_extra_totale = km_diesel_extra_feriali + km_diesel_extra_weekend
 
-    # Check if any extra diesel bus is needed (1 bus per line exceeding the limit)
-    supporto_diesel_needed = int(km_feriali > km_limite) + int(km_weekend > km_limite)
+    # Determine if a diesel support bus is needed (only one diesel bus even if both periods exceed the limit)
+    supporto_diesel_needed = 1 if km_feriali > km_limite or km_weekend > km_limite else 0
 
     return km_elettrico_totale, km_diesel_extra_totale, supporto_diesel_needed
 
@@ -69,7 +69,7 @@ def calcola_emissioni_co2(km_annui, emissioni_per_unita, num_bus):
     return round(emissioni_totali, 2)
 
 def calcola_costo_proiezione(km_annui, consumo_medio, costo_manutenzione, costo_iniziale_bus, costo_carburante,
-                             tasso_inflazione, anni, periodo_ammortamento, tipo_bus, num_bus, ammortamento=True):
+                             tasso_inflazione, anni, periodo_ammortamento, tipo_bus, num_bus, supporto_diesel_needed=0, ammortamento=True):
     costi_annuali = []
     ammortamento_annuale = costo_iniziale_bus / periodo_ammortamento
     costo_una_tantum_applicato = False
@@ -85,6 +85,8 @@ def calcola_costo_proiezione(km_annui, consumo_medio, costo_manutenzione, costo_
 
         if anno == 0:
             costo_annuale += costo_iniziale_bus * num_bus  # Include the initial bus purchase cost in the first year
+            if supporto_diesel_needed > 0:
+                costo_annuale += dati_bus["diesel"]["costo_iniziale"] * supporto_diesel_needed  # Add purchase cost of support diesel buses
             if tipo_bus == "elettrico" and not costo_una_tantum_applicato:
                 costo_annuale += COSTI_UNA_TANTUM
                 costo_una_tantum_applicato = True
@@ -154,7 +156,7 @@ def main():
                                                                           dati_bus["diesel"]["costo_manutenzione"],
                                                                           ammortamento_annuale_diesel,
                                                                           total_supporto_diesel_needed,
-                                                                          include_initial_purchase=True)
+                                                                          include_initial_purchase=(total_supporto_diesel_needed > 0))
 
     emissioni_annue_diesel_extra = calcola_emissioni_co2(km_totali["diesel_extra"], dati_bus["diesel"]["emissioni"],
                                                          total_supporto_diesel_needed)
@@ -187,7 +189,9 @@ def main():
                                                           dati_bus["elettrico"]["costo_carburante"],
                                                           TASSO_INFLAZIONE_ELETTRICO, ANNI_PROIEZIONE,
                                                           dati_bus["elettrico"]["periodo_ammortamento"],
-                                                          tipo_bus="elettrico", num_bus=num_bus, ammortamento=False)
+                                                          tipo_bus="elettrico", num_bus=num_bus,
+                                                          supporto_diesel_needed=total_supporto_diesel_needed,
+                                                          ammortamento=False)
 
     # Calculate cumulative costs for diesel and electric buses
     costo_cumulato_diesel = np.cumsum(proiezione_costi_diesel)
@@ -297,7 +301,7 @@ def main():
     sns.barplot(ax=axs[1, 1], x='Tipo', y='Emissioni per km', data=emissioni_per_km_data,
                 palette=['blue', 'orange', 'green'], dodge=False, legend=False)
     axs[1, 1].set_ylabel("Emissioni di CO2 per km (kg)", fontsize=14, fontweight='bold')
-    axs[1, 1].set_title(f"Emissioni di CO2 per km", fontsize=16)
+    axs[1, 1].set_title(f"Emissioni di CO2 per km {num_bus} bus", fontsize=16)
     axs[1, 1].grid(True)
     axs[1, 1].set_xlabel('')
     axs[1, 1].tick_params(axis='x', which='both', length=0)
